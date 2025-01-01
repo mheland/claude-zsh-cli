@@ -1,7 +1,9 @@
-# claude-zsh-cli
+# CLI interface for Claude with Z Shell
 Claude AI with ZSH, call using `@ai Hello Claude!`
 
-Uses Claude Haiku for fast response.
+- Uses Claude Haiku for fast response.
+- Python3 for parsing the JSON response with fallback
+- `--debug` to see raw response
 
 ## Install jq for JSON parsing
 `sudo apt-get install jq`
