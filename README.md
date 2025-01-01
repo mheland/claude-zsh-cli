@@ -1,4 +1,4 @@
-# CLI interface for Claude with Z Shell
+# CLI interface for Claude with ZSH / Zshell
 Claude AI with ZSH, call using `@ai Hello Claude!`
 
 - Uses Claude Haiku for fast response.
