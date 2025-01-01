@@ -1,0 +1,139 @@
+#!/bin/zsh
+
+# Add the following to your ~/.zshrc:
+#
+# # AI CLI alias and completion
+# alias @ai="claude-cli"
+# compdef _gnu_generic @ai
+#
+# Configuration file path
+CONFIG_FILE="$HOME/.config/claude-cli/config"
+CONFIG_DIR=$(dirname "$CONFIG_FILE")
+
+# Debug mode flag
+DEBUG=${DEBUG:-0}
+
+# Debug function
+debug() {
+    if [ "$DEBUG" -eq 1 ]; then
+        echo "[DEBUG] $1" >&2
+    fi
+}
+
+# Check if config directory exists, if not create it
+if [ ! -d "$CONFIG_DIR" ]; then
+    mkdir -p "$CONFIG_DIR"
+fi
+
+# Check if config file exists, if not create it and prompt for API key
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Claude CLI Setup"
+    echo "---------------"
+    echo "Please enter your Anthropic API key:"
+    read -rs API_KEY
+    echo "ANTHROPIC_API_KEY=$API_KEY" > "$CONFIG_FILE"
+    chmod 600 "$CONFIG_FILE"  # Set restrictive permissions
+    echo "\nConfiguration saved!"
+fi
+
+# Source the config file
+source "$CONFIG_FILE"
+
+# Function to make API call to Claude
+query_claude() {
+    local prompt="$1"
+    debug "Making API call with prompt: $prompt"
+    
+    # Escape the prompt for JSON
+    local escaped_prompt=$(echo "$prompt" | sed 's/"/\\"/g')
+    
+    local json_payload="{
+        \"model\": \"claude-3-sonnet-20240229\",
+        \"max_tokens\": 1024,
+        \"messages\": [{
+            \"role\": \"user\",
+            \"content\": \"$escaped_prompt\"
+        }]
+    }"
+    
+    debug "JSON payload: $json_payload"
+    
+    local response=$(curl -s https://api.anthropic.com/v1/messages \
+        -H "x-api-key: $ANTHROPIC_API_KEY" \
+        -H "anthropic-version: 2023-06-01" \
+        -H "content-type: application/json" \
+        -d "$json_payload")
+    
+    debug "Raw API response: $response"
+    
+    # Check if response contains an error
+    if echo "$response" | grep -q '"error"'; then
+        echo "Error from API:" >&2
+        echo "$response" | grep -o '"error":[^}]*' >&2
+        return 1
+    fi
+    
+    # Extract the content from the response using jq if available, otherwise fallback to grep
+    if command -v jq >/dev/null 2>&1; then
+        echo "$response" | jq -r '.content[0].text' 2>/dev/null
+    else
+        echo "$response" | grep -o '"text":"[^"]*"' | cut -d'"' -f4
+    fi
+}
+
+# Function to handle shell special characters
+handle_special_chars() {
+    setopt LOCAL_OPTIONS NO_NOMATCH
+    echo "$*"
+}
+
+# Main script logic
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: claude-cli [OPTIONS] <prompt>"
+    echo ""
+    echo "Options:"
+    echo "  --help, -h    Show this help message"
+    echo "  --reset       Reset API key"
+    echo "  --debug       Enable debug output"
+    echo ""
+    echo "Example:"
+    echo "  claude-cli \"What is the capital of France?\""
+    echo ""
+    echo "Environment variables:"
+    echo "  DEBUG=1       Enable debug output"
+    exit 0
+fi
+
+if [ "$1" = "--reset" ]; then
+    echo "Please enter your new Anthropic API key:"
+    read -rs API_KEY
+    echo "ANTHROPIC_API_KEY=$API_KEY" > "$CONFIG_FILE"
+    chmod 600 "$CONFIG_FILE"
+    echo "\nAPI key has been reset!"
+    exit 0
+fi
+
+if [ "$1" = "--debug" ]; then
+    DEBUG=1
+    shift
+fi
+
+if [ $# -eq 0 ]; then
+    echo "Error: Please provide a prompt" >&2
+    echo "Use --help for usage information" >&2
+    exit 1
+fi
+
+# Combine all arguments into a single prompt and handle special characters
+prompt=$(handle_special_chars "$@")
+
+# Query Claude and print the response
+response=$(query_claude "$prompt")
+exit_code=$?
+
+if [ $exit_code -ne 0 ]; then
+    echo "Failed to get response from Claude" >&2
+    exit $exit_code
+fi
+
+echo "$response"
