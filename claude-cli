@@ -1,11 +1,5 @@
 #!/bin/zsh
 
-# Add the following to your ~/.zshrc:
-#
-# # AI CLI alias and completion with noglob to handle special characters
-# alias @ai="noglob claude-cli"
-# compdef _gnu_generic @ai
-#
 CONFIG_FILE="$HOME/.config/claude-cli/config"
 CONFIG_DIR=$(dirname "$CONFIG_FILE")
 DEBUG=${DEBUG:-0}
@@ -48,9 +42,10 @@ format_content() {
     local NC='\033[0m'
     
     # Process content line by line
-    while IFS= read -r line || [ -n "$line" ]; do
-        # Code blocks
-        if [[ "$line" == \`\`\`* ]]; then
+    # Use printf to ensure proper handling of special characters
+    printf '%s\n' "$content" | while IFS= read -r line || [ -n "$line" ]; do
+        # Code blocks with --- delimiter
+        if [[ "$line" == "---"* ]]; then
             if [ -z "$in_code_block" ]; then
                 in_code_block=1
                 echo "${CYAN}────────────────────────────────────────────${NC}"
@@ -65,34 +60,28 @@ format_content() {
         
         if [ -n "$in_code_block" ]; then
             line=$(echo "$line" | sed 's/\\"/"/g' | sed 's/[\\]\?(/\\(/g' | sed 's/[\\]\?)/\\)/g')
-            echo "$line"
+            echo "${CYAN}$line${NC}"
             continue
         fi
 
         # Handle bullet points with command options
         if [[ "$line" =~ ^[[:space:]]*[-•][[:space:]]*\`?-[a-zA-Z0-9:][^:\`]*\`?:[[:space:]] ]]; then
-            # Extract the option and explanation, removing backticks
             local option=$(echo "$line" | sed 's/^[[:space:]]*[-•][[:space:]]*`\?\(-[^:`]*\)`\?:[[:space:]]*.*$/\1/')
             local explanation=$(echo "$line" | sed 's/^[[:space:]]*[-•][[:space:]]*`\?-[^:`]*`\?:[[:space:]]*\(.*\)$/\1/')
             echo "${YELLOW}•${NC} ${CYAN}${option}${NC}: ${explanation}"
-            continue
         elif [[ "$line" =~ ^[[:space:]]*[-•][[:space:]] ]]; then
-            # Remove backticks from regular bullet points
             line=$(echo "$line" | sed "s/\`//g")
             echo "${YELLOW}•${NC}${line#[•-]}"
-            continue
+        else
+            # Handle inline code and filenames
+            while [[ "$line" =~ ([^\`]*)\`([^\`]+)\`(.*) ]]; do
+                before="${BASH_REMATCH[1]}"
+                code="${BASH_REMATCH[2]}"
+                after="${BASH_REMATCH[3]}"
+                line="${before}${CYAN}${code}${NC}${after}"
+            done
+            echo "$line"
         fi
-
-        # Handle inline code and filenames (remove backticks but keep highlighting)
-        while [[ "$line" =~ ([^\`]*)\`([^\`]+)\`(.*) ]]; do
-            before="${BASH_REMATCH[1]}"
-            code="${BASH_REMATCH[2]}"
-            after="${BASH_REMATCH[3]}"
-            line="${before}${CYAN}${code}${NC}${after}"
-        done
-
-        # Print the line
-        echo "$line"
     done <<< "$content"
 }
 
@@ -100,15 +89,25 @@ query_claude() {
     local prompt="$1"
     debug "Making API call with prompt: $prompt"
     
-    local escaped_prompt=$(echo "$prompt" | sed 's/"/\\"/g')
-    local json_payload="{
-        \"model\": \"claude-3-haiku-20240307\",
-        \"max_tokens\": 1024,
-        \"messages\": [{
-            \"role\": \"user\",
-            \"content\": \"$escaped_prompt\"
-        }]
-    }"
+    # Properly escape the prompt for JSON, handling control characters
+    # Create JSON payload that requests shell-friendly format
+    local system_prompt="Please format your responses for shell output. Use plain text without special formatting. For code blocks, use --- as delimiter instead of backticks. For lists, use simple dashes. Avoid any special characters or markdown."
+    
+    local json_payload
+    json_payload=$(jq -n \
+        --arg prompt "$prompt" \
+        --arg sysprompt "$system_prompt" \
+        '{
+            model: "claude-3-haiku-20240307",
+            max_tokens: 1024,
+            system: $sysprompt,
+            messages: [
+                {
+                    role: "user",
+                    content: $prompt
+                }
+            ]
+        }')
     
     debug "JSON payload: $json_payload"
     
@@ -120,27 +119,21 @@ query_claude() {
     
     debug "Raw API response: $response"
     
+    # Extract content text directly from response using a simpler jq pattern
     local content
-    content=$(python3 -c '
-import json, sys
-try:
-    response = json.loads(sys.stdin.read())
-    print(response["content"][0]["text"])
-except Exception as e:
-    print(f"Error parsing JSON: {str(e)}", file=sys.stderr)
-    exit(1)
-' <<< "$response" 2>/dev/null)
-
-    if [ $? -eq 0 ] && [ -n "$content" ]; then
+    content=$(printf '%s' "$response" | jq -r '.content[0].text' 2>/dev/null)
+    
+    if [ $? -ne 0 ] || [ -z "$content" ]; then
+        debug "Failed to parse response with jq"
+        content=$(printf '%s' "$response" | grep -o '"text":"[^"]*"' | head -1 | sed 's/"text":"\(.*\)"/\1/')
+    fi
+    
+    if [ -n "$content" ]; then
         format_content "$content"
     else
-        content=$(echo "$response" | grep -o '"text":"[^"]*"' | cut -d'"' -f4 | sed 's/\\n/\n/g')
-        if [ -n "$content" ]; then
-            format_content "$content"
-        else
-            echo "Error: Could not parse response from Claude" >&2
-            return 1
-        fi
+        echo "Error: Could not parse response from Claude" >&2
+        debug "Response parsing error. Response was: $response"
+        return 1
     fi
 }
 
