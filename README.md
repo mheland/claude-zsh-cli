@@ -5,6 +5,8 @@ Claude AI with ZSH, call using `@ai Hello Claude!`
 - `jq` for parsing JSON respons, grep fallback
 - `--debug` to see raw response
 
+<img src="claude-cli1.png" width="400">
+
 ## Install jq for JSON parsing
 `sudo apt-get install jq`
 
