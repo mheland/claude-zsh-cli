@@ -2,7 +2,7 @@
 Claude AI with ZSH, call using `@ai Hello Claude!`
 
 - Uses Claude Haiku for fast response.
-- Python3 for parsing JSON respons, grep fallback
+- `jq` for parsing JSON respons, grep fallback
 - `--debug` to see raw response
 
 ## Install jq for JSON parsing
