@@ -19,6 +19,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
     echo "Claude CLI Setup"
     echo "---------------"
     echo "Please enter your Anthropic API key:"
+    echo "Create a new key at https://console.anthropic.com/settings/keys"
     read -rs API_KEY
     echo "ANTHROPIC_API_KEY=$API_KEY" > "$CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"
@@ -45,7 +46,7 @@ format_content() {
     
     local in_code_block=0
     local i=0
-    while (( i < ${#lines[@]} )); do
+    while (( i <= ${#lines[@]} )); do
         local line="${lines[$i]}"
         
         # Handle code blocks
